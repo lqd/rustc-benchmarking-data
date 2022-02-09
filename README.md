@@ -46,3 +46,5 @@ The data was gathered using a combination of local rustc builds and nightly, whe
 - local rustc, for all the perf collector data (cachegrind, dhat) purposes: lines debuginfo, incremental turned off, jemalloc turned off, stage 2, commit `e0e70c0c2c4fc8d150a56c181994e3a3b3e9999a`
 - nightly rustc for cargo timings: `rustc 1.60.0-nightly (21b4a9cfd 2022-01-27)`
 - local valgrind, to have some demangling fixes: commit `624fcaa4af8c923b07f6953fef3c5424eefb2ec1`
+
+(Some of the data can be browsed on GH, either via the [summaries](https://lqd.github.io/rustc-benchmarking-data/summaries/), or [the raw data](https://lqd.github.io/rustc-benchmarking-data/results/) e.g. to see some cargo timings)
