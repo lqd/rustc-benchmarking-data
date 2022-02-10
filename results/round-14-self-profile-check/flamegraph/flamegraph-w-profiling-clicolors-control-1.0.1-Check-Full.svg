@@ -1,0 +1,419 @@
+<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg version="1.1" width="1200" height="342" onload="init(evt)" viewBox="0 0 1200 342" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><!--Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples.--><!--NOTES: --><defs><linearGradient id="background" y1="0" y2="1" x1="0" x2="0"><stop stop-color="#eeeeee" offset="5%"/><stop stop-color="#eeeeb0" offset="95%"/></linearGradient></defs><style type="text/css">
+text { font-family:"Verdana"; font-size:12px; fill:rgb(0,0,0); }
+#title { text-anchor:middle; font-size:17px; }
+#search { opacity:0.1; cursor:pointer; }
+#search:hover, #search.show { opacity:1; }
+#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+#unzoom { cursor:pointer; }
+#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+.hide { display:none; }
+.parent { opacity:0.5; }
+</style><script type="text/ecmascript"><![CDATA[var nametype = 'Function:';
+var fontsize = 12;
+var fontwidth = 0.59;
+var xpad = 10;
+var inverted = false;
+var searchcolor = 'rgb(230,0,230)';
+var fluiddrawing = true;
+var truncate_text_right = false;]]><![CDATA["use strict";
+var details, searchbtn, unzoombtn, matchedtxt, svg, searching, frames;
+function init(evt) {
+    details = document.getElementById("details").firstChild;
+    searchbtn = document.getElementById("search");
+    unzoombtn = document.getElementById("unzoom");
+    matchedtxt = document.getElementById("matched");
+    svg = document.getElementsByTagName("svg")[0];
+    frames = document.getElementById("frames");
+    searching = 0;
+
+    // Use GET parameters to restore a flamegraph's state.
+    var restore_state = function() {
+        var params = get_params();
+        if (params.x && params.y)
+            zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+        if (params.s)
+            search(params.s);
+    };
+
+    if (fluiddrawing) {
+        // Make width dynamic so the SVG fits its parent's width.
+        svg.removeAttribute("width");
+        // Edge requires us to have a viewBox that gets updated with size changes.
+        var isEdge = /Edge\/\d./i.test(navigator.userAgent);
+        if (!isEdge) {
+          svg.removeAttribute("viewBox");
+        }
+        var update_for_width_change = function() {
+            if (isEdge) {
+                svg.attributes.viewBox.value = "0 0 " + svg.width.baseVal.value + " " + svg.height.baseVal.value;
+            }
+
+            // Keep consistent padding on left and right of frames container.
+            frames.attributes.width.value = svg.width.baseVal.value - xpad * 2;
+
+            // Text truncation needs to be adjusted for the current width.
+            var el = frames.children;
+            for(var i = 0; i < el.length; i++) {
+                update_text(el[i]);
+            }
+
+            // Keep search elements at a fixed distance from right edge.
+            var svgWidth = svg.width.baseVal.value;
+            searchbtn.attributes.x.value = svgWidth - xpad - 100;
+            matchedtxt.attributes.x.value = svgWidth - xpad - 100;
+        };
+        window.addEventListener('resize', function() {
+            update_for_width_change();
+        });
+        // This needs to be done asynchronously for Safari to work.
+        setTimeout(function() {
+            unzoom();
+            update_for_width_change();
+            restore_state();
+        }, 0);
+    } else {
+        restore_state();
+    }
+}
+// event listeners
+window.addEventListener("click", function(e) {
+    var target = find_group(e.target);
+    if (target) {
+        if (target.nodeName == "a") {
+            if (e.ctrlKey === false) return;
+            e.preventDefault();
+        }
+        if (target.classList.contains("parent")) unzoom();
+        zoom(target);
+
+        // set parameters for zoom state
+        var el = target.querySelector("rect");
+        if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+            var params = get_params()
+            params.x = el.attributes._orig_x.value;
+            params.y = el.attributes.y.value;
+            history.replaceState(null, null, parse_params(params));
+        }
+    }
+    else if (e.target.id == "unzoom") {
+        unzoom();
+
+        // remove zoom state
+        var params = get_params();
+        if (params.x) delete params.x;
+        if (params.y) delete params.y;
+        history.replaceState(null, null, parse_params(params));
+    }
+    else if (e.target.id == "search") search_prompt();
+}, false)
+// mouse-over for info
+// show
+window.addEventListener("mouseover", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = nametype + " " + g_to_text(target);
+}, false)
+// clear
+window.addEventListener("mouseout", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = ' ';
+}, false)
+// ctrl-F for search
+window.addEventListener("keydown",function (e) {
+    if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+        e.preventDefault();
+        search_prompt();
+    }
+}, false)
+// functions
+function get_params() {
+    var params = {};
+    var paramsarr = window.location.search.substr(1).split('&');
+    for (var i = 0; i < paramsarr.length; ++i) {
+        var tmp = paramsarr[i].split("=");
+        if (!tmp[0] || !tmp[1]) continue;
+        params[tmp[0]]  = decodeURIComponent(tmp[1]);
+    }
+    return params;
+}
+function parse_params(params) {
+    var uri = "?";
+    for (var key in params) {
+        uri += key + '=' + encodeURIComponent(params[key]) + '&';
+    }
+    if (uri.slice(-1) == "&")
+        uri = uri.substring(0, uri.length - 1);
+    if (uri == '?')
+        uri = window.location.href.split('?')[0];
+    return uri;
+}
+function find_child(node, selector) {
+    var children = node.querySelectorAll(selector);
+    if (children.length) return children[0];
+    return;
+}
+function find_group(node) {
+    var parent = node.parentElement;
+    if (!parent) return;
+    if (parent.id == "frames") return node;
+    return find_group(parent);
+}
+function orig_save(e, attr, val) {
+    if (e.attributes["_orig_" + attr] != undefined) return;
+    if (e.attributes[attr] == undefined) return;
+    if (val == undefined) val = e.attributes[attr].value;
+    e.setAttribute("_orig_" + attr, val);
+}
+function orig_load(e, attr) {
+    if (e.attributes["_orig_"+attr] == undefined) return;
+    e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+    e.removeAttribute("_orig_" + attr);
+}
+function g_to_text(e) {
+    var text = find_child(e, "title").firstChild.nodeValue;
+    return (text)
+}
+function g_to_func(e) {
+    var func = g_to_text(e);
+    // if there's any manipulation we want to do to the function
+    // name before it's searched, do it here before returning.
+    return (func);
+}
+function update_text(e) {
+    var r = find_child(e, "rect");
+    var t = find_child(e, "text");
+    var w = parseFloat(r.attributes.width.value) * frames.attributes.width.value / 100 - 3;
+    var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+    t.attributes.x.value = format_percent((parseFloat(r.attributes.x.value) + (100 * 3 / frames.attributes.width.value)));
+    // Smaller than this size won't fit anything
+    if (w < 2 * fontsize * fontwidth) {
+        t.textContent = "";
+        return;
+    }
+    t.textContent = txt;
+    // Fit in full text width
+    if (/^ *\$/.test(txt) || t.getComputedTextLength() < w)
+        return;
+    if (truncate_text_right) {
+        // Truncate the right side of the text.
+        for (var x = txt.length - 2; x > 0; x--) {
+            if (t.getSubStringLength(0, x + 2) <= w) {
+                t.textContent = txt.substring(0, x) + "..";
+                return;
+            }
+        }
+    } else {
+        // Truncate the left side of the text.
+        for (var x = 2; x < txt.length; x++) {
+            if (t.getSubStringLength(x - 2, txt.length) <= w) {
+                t.textContent = ".." + txt.substring(x, txt.length);
+                return;
+            }
+        }
+    }
+    t.textContent = "";
+}
+// zoom
+function zoom_reset(e) {
+    if (e.attributes != undefined) {
+        orig_load(e, "x");
+        orig_load(e, "width");
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_reset(c[i]);
+    }
+}
+function zoom_child(e, x, ratio) {
+    if (e.attributes != undefined) {
+        if (e.attributes.x != undefined) {
+            orig_save(e, "x");
+            e.attributes.x.value = format_percent((parseFloat(e.attributes.x.value) - x) * ratio);
+            if (e.tagName == "text") {
+                e.attributes.x.value = format_percent(parseFloat(find_child(e.parentNode, "rect[x]").attributes.x.value) + (100 * 3 / frames.attributes.width.value));
+            }
+        }
+        if (e.attributes.width != undefined) {
+            orig_save(e, "width");
+            e.attributes.width.value = format_percent(parseFloat(e.attributes.width.value) * ratio);
+        }
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_child(c[i], x, ratio);
+    }
+}
+function zoom_parent(e) {
+    if (e.attributes) {
+        if (e.attributes.x != undefined) {
+            orig_save(e, "x");
+            e.attributes.x.value = "0.0%";
+        }
+        if (e.attributes.width != undefined) {
+            orig_save(e, "width");
+            e.attributes.width.value = "100.0%";
+        }
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_parent(c[i]);
+    }
+}
+function zoom(node) {
+    var attr = find_child(node, "rect").attributes;
+    var width = parseFloat(attr.width.value);
+    var xmin = parseFloat(attr.x.value);
+    var xmax = xmin + width;
+    var ymin = parseFloat(attr.y.value);
+    var ratio = 100 / width;
+    // XXX: Workaround for JavaScript float issues (fix me)
+    var fudge = 0.001;
+    unzoombtn.classList.remove("hide");
+    var el = frames.children;
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        var a = find_child(e, "rect").attributes;
+        var ex = parseFloat(a.x.value);
+        var ew = parseFloat(a.width.value);
+        // Is it an ancestor
+        if (!inverted) {
+            var upstack = parseFloat(a.y.value) > ymin;
+        } else {
+            var upstack = parseFloat(a.y.value) < ymin;
+        }
+        if (upstack) {
+            // Direct ancestor
+            if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+                e.classList.add("parent");
+                zoom_parent(e);
+                update_text(e);
+            }
+            // not in current path
+            else
+                e.classList.add("hide");
+        }
+        // Children maybe
+        else {
+            // no common path
+            if (ex < xmin || ex + fudge >= xmax) {
+                e.classList.add("hide");
+            }
+            else {
+                zoom_child(e, xmin, ratio);
+                update_text(e);
+            }
+        }
+    }
+}
+function unzoom() {
+    unzoombtn.classList.add("hide");
+    var el = frames.children;
+    for(var i = 0; i < el.length; i++) {
+        el[i].classList.remove("parent");
+        el[i].classList.remove("hide");
+        zoom_reset(el[i]);
+        update_text(el[i]);
+    }
+}
+// search
+function reset_search() {
+    var el = document.querySelectorAll("#frames rect");
+    for (var i = 0; i < el.length; i++) {
+        orig_load(el[i], "fill")
+    }
+    var params = get_params();
+    delete params.s;
+    history.replaceState(null, null, parse_params(params));
+}
+function search_prompt() {
+    if (!searching) {
+        var term = prompt("Enter a search term (regexp " +
+            "allowed, eg: ^ext4_)", "");
+        if (term != null) {
+            search(term)
+        }
+    } else {
+        reset_search();
+        searching = 0;
+        searchbtn.classList.remove("show");
+        searchbtn.firstChild.nodeValue = "Search"
+        matchedtxt.classList.add("hide");
+        matchedtxt.firstChild.nodeValue = ""
+    }
+}
+function search(term) {
+    var re = new RegExp(term);
+    var el = frames.children;
+    var matches = new Object();
+    var maxwidth = 0;
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        var func = g_to_func(e);
+        var rect = find_child(e, "rect");
+        if (func == null || rect == null)
+            continue;
+        // Save max width. Only works as we have a root frame
+        var w = parseFloat(rect.attributes.width.value);
+        if (w > maxwidth)
+            maxwidth = w;
+        if (func.match(re)) {
+            // highlight
+            var x = parseFloat(rect.attributes.x.value);
+            orig_save(rect, "fill");
+            rect.attributes.fill.value = searchcolor;
+            // remember matches
+            if (matches[x] == undefined) {
+                matches[x] = w;
+            } else {
+                if (w > matches[x]) {
+                    // overwrite with parent
+                    matches[x] = w;
+                }
+            }
+            searching = 1;
+        }
+    }
+    if (!searching)
+        return;
+    var params = get_params();
+    params.s = term;
+    history.replaceState(null, null, parse_params(params));
+
+    searchbtn.classList.add("show");
+    searchbtn.firstChild.nodeValue = "Reset Search";
+    // calculate percent matched, excluding vertical overlap
+    var count = 0;
+    var lastx = -1;
+    var lastw = 0;
+    var keys = Array();
+    for (k in matches) {
+        if (matches.hasOwnProperty(k))
+            keys.push(k);
+    }
+    // sort the matched frames by their x location
+    // ascending, then width descending
+    keys.sort(function(a, b){
+        return a - b;
+    });
+    // Step through frames saving only the biggest bottom-up frames
+    // thanks to the sort order. This relies on the tree property
+    // where children are always smaller than their parents.
+    var fudge = 0.0001;    // JavaScript floating point
+    for (var k in keys) {
+        var x = parseFloat(keys[k]);
+        var w = matches[keys[k]];
+        if (x >= lastx + lastw - fudge) {
+            count += w;
+            lastx = x;
+            lastw = w;
+        }
+    }
+    // display matched percent
+    matchedtxt.classList.remove("hide");
+    var pct = 100 * count / maxwidth;
+    if (pct != 100) pct = pct.toFixed(1);
+    matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+}
+function format_percent(n) {
+    return n.toFixed(4) + "%";
+}
+]]></script><rect x="0" y="0" width="100%" height="342" fill="url(#background)"/><text id="title" x="50.0000%" y="24.00">Flame Graph</text><text id="details" x="10" y="325.00"> </text><text id="unzoom" class="hide" x="10" y="24.00">Reset Zoom</text><text id="search" x="1090" y="24.00">Search</text><text id="matched" x="1090" y="325.00"> </text><svg id="frames" x="10" width="1180"><g><title>param_env (87,401 samples, 0.16%)</title><rect x="5.9485%" y="181" width="0.1551%" height="15" fill="rgb(227,0,7)"/><text x="6.1985%" y="191.50"></text></g><g><title>codegen_fn_attrs (76,421 samples, 0.14%)</title><rect x="6.2973%" y="165" width="0.1356%" height="15" fill="rgb(217,0,24)"/><text x="6.5473%" y="175.50"></text></g><g><title>adt_drop_tys (83,921 samples, 0.15%)</title><rect x="7.2771%" y="133" width="0.1489%" height="15" fill="rgb(221,193,54)"/><text x="7.5271%" y="143.50"></text></g><g><title>needs_drop_raw (674,418 samples, 1.20%)</title><rect x="7.2514%" y="149" width="1.1968%" height="15" fill="rgb(248,212,6)"/><text x="7.5014%" y="159.50"></text></g><g><title>is_copy_raw (576,017 samples, 1.02%)</title><rect x="7.4260%" y="133" width="1.0222%" height="15" fill="rgb(208,68,35)"/><text x="7.6760%" y="143.50"></text></g><g><title>evaluate_obligation (561,647 samples, 1.00%)</title><rect x="7.4515%" y="117" width="0.9967%" height="15" fill="rgb(232,128,0)"/><text x="7.7015%" y="127.50"></text></g><g><title>trait_impls_of (421,434 samples, 0.75%)</title><rect x="7.7004%" y="101" width="0.7479%" height="15" fill="rgb(207,160,47)"/><text x="7.9504%" y="111.50"></text></g><g><title>implementations_of_trait (84,610 samples, 0.15%)</title><rect x="8.2981%" y="85" width="0.1501%" height="15" fill="rgb(228,23,34)"/><text x="8.5481%" y="95.50"></text></g><g><title>metadata_decode_entry_implementations_of_trait (66,980 samples, 0.12%)</title><rect x="8.3294%" y="69" width="0.1189%" height="15" fill="rgb(218,30,26)"/><text x="8.5794%" y="79.50"></text></g><g><title>codegen_fulfill_obligation (125,612 samples, 0.22%)</title><rect x="8.5816%" y="133" width="0.2229%" height="15" fill="rgb(220,122,19)"/><text x="8.8316%" y="143.50"></text></g><g><title>impl_parent (684,660 samples, 1.21%)</title><rect x="10.4705%" y="117" width="1.2150%" height="15" fill="rgb(250,228,42)"/><text x="10.7205%" y="127.50"></text></g><g><title>metadata_decode_entry_impl_parent (428,525 samples, 0.76%)</title><rect x="10.9250%" y="101" width="0.7605%" height="15" fill="rgb(240,193,28)"/><text x="11.1750%" y="111.50"></text></g><g><title>specialization_graph_of (3,844,163 samples, 6.82%)</title><rect x="8.8526%" y="133" width="6.8218%" height="15" fill="rgb(216,20,37)"/><text x="9.1026%" y="143.50">specializ..</text></g><g><title>impl_trait_ref (2,247,816 samples, 3.99%)</title><rect x="11.6855%" y="117" width="3.9890%" height="15" fill="rgb(206,188,39)"/><text x="11.9355%" y="127.50">impl..</text></g><g><title>metadata_decode_entry_impl_trait_ref (2,013,585 samples, 3.57%)</title><rect x="12.1012%" y="101" width="3.5733%" height="15" fill="rgb(217,207,13)"/><text x="12.3512%" y="111.50">meta..</text></g><g><title>resolve_instance (4,113,926 samples, 7.30%)</title><rect x="8.4482%" y="149" width="7.3005%" height="15" fill="rgb(231,73,38)"/><text x="8.6982%" y="159.50">resolve_in..</text></g><g><title>thir_body (156,891 samples, 0.28%)</title><rect x="15.7595%" y="149" width="0.2784%" height="15" fill="rgb(225,20,46)"/><text x="16.0095%" y="159.50"></text></g><g><title>mir_const (5,934,548 samples, 10.53%)</title><rect x="5.5141%" y="197" width="10.5314%" height="15" fill="rgb(210,31,41)"/><text x="5.7641%" y="207.50">mir_const</text></g><g><title>unsafety_check_result (5,602,333 samples, 9.94%)</title><rect x="6.1036%" y="181" width="9.9418%" height="15" fill="rgb(221,200,47)"/><text x="6.3536%" y="191.50">unsafety_check..</text></g><g><title>mir_built (5,416,810 samples, 9.61%)</title><rect x="6.4329%" y="165" width="9.6126%" height="15" fill="rgb(226,26,5)"/><text x="6.6829%" y="175.50">mir_built</text></g><g><title>has_structural_eq_impls (182,472 samples, 0.32%)</title><rect x="16.2340%" y="181" width="0.3238%" height="15" fill="rgb(249,33,26)"/><text x="16.4840%" y="191.50"></text></g><g><title>evaluate_obligation (162,492 samples, 0.29%)</title><rect x="16.2695%" y="165" width="0.2884%" height="15" fill="rgb(235,183,28)"/><text x="16.5195%" y="175.50"></text></g><g><title>trait_impls_of (137,272 samples, 0.24%)</title><rect x="16.3142%" y="149" width="0.2436%" height="15" fill="rgb(221,5,38)"/><text x="16.5642%" y="159.50"></text></g><g><title>adt_drop_tys (72,880 samples, 0.13%)</title><rect x="16.7352%" y="165" width="0.1293%" height="15" fill="rgb(247,18,42)"/><text x="16.9852%" y="175.50"></text></g><g><title>needs_drop_raw (116,142 samples, 0.21%)</title><rect x="16.7199%" y="181" width="0.2061%" height="15" fill="rgb(241,131,45)"/><text x="16.9699%" y="191.50"></text></g><g><title>mir_promoted (6,677,375 samples, 11.85%)</title><rect x="5.0800%" y="213" width="11.8496%" height="15" fill="rgb(249,31,29)"/><text x="5.3300%" y="223.50">mir_promoted</text></g><g><title>mir_const_qualif (498,214 samples, 0.88%)</title><rect x="16.0455%" y="197" width="0.8841%" height="15" fill="rgb(225,111,53)"/><text x="16.2955%" y="207.50"></text></g><g><title>MIR_borrow_checking (8,789,087 samples, 15.60%)</title><rect x="1.8339%" y="245" width="15.5970%" height="15" fill="rgb(238,160,17)"/><text x="2.0839%" y="255.50">MIR_borrow_checking</text></g><g><title>mir_borrowck (8,763,626 samples, 15.55%)</title><rect x="1.8791%" y="229" width="15.5518%" height="15" fill="rgb(214,148,48)"/><text x="2.1291%" y="239.50">mir_borrowck</text></g><g><title>type_op_prove_predicate (229,422 samples, 0.41%)</title><rect x="17.0238%" y="213" width="0.4071%" height="15" fill="rgb(232,36,49)"/><text x="17.2738%" y="223.50"></text></g><g><title>MIR_effect_checking (99,941 samples, 0.18%)</title><rect x="17.4309%" y="245" width="0.1774%" height="15" fill="rgb(209,103,24)"/><text x="17.6809%" y="255.50"></text></g><g><title>mir_drops_elaborated_and_const_checked (79,920 samples, 0.14%)</title><rect x="17.4664%" y="229" width="0.1418%" height="15" fill="rgb(229,88,8)"/><text x="17.7164%" y="239.50"></text></g><g><title>hir_module_items (155,783 samples, 0.28%)</title><rect x="17.6083%" y="245" width="0.2765%" height="15" fill="rgb(213,181,19)"/><text x="17.8583%" y="255.50"></text></g><g><title>get_lang_items (90,541 samples, 0.16%)</title><rect x="18.2894%" y="197" width="0.1607%" height="15" fill="rgb(254,191,54)"/><text x="18.5394%" y="207.50"></text></g><g><title>should_inherit_track_caller (104,111 samples, 0.18%)</title><rect x="18.4501%" y="197" width="0.1848%" height="15" fill="rgb(241,83,37)"/><text x="18.7001%" y="207.50"></text></g><g><title>codegen_fn_attrs (305,753 samples, 0.54%)</title><rect x="18.1560%" y="213" width="0.5426%" height="15" fill="rgb(233,36,39)"/><text x="18.4060%" y="223.50"></text></g><g><title>check_mod_attrs (424,195 samples, 0.75%)</title><rect x="17.9461%" y="229" width="0.7528%" height="15" fill="rgb(226,3,54)"/><text x="18.1961%" y="239.50"></text></g><g><title>check_mod_const_bodies (69,000 samples, 0.12%)</title><rect x="18.6989%" y="229" width="0.1224%" height="15" fill="rgb(245,192,40)"/><text x="18.9489%" y="239.50"></text></g><g><title>lookup_deprecation_entry (116,743 samples, 0.21%)</title><rect x="19.1183%" y="213" width="0.2072%" height="15" fill="rgb(238,167,29)"/><text x="19.3683%" y="223.50"></text></g><g><title>lookup_stability (56,520 samples, 0.10%)</title><rect x="19.3255%" y="213" width="0.1003%" height="15" fill="rgb(232,182,51)"/><text x="19.5755%" y="223.50"></text></g><g><title>check_mod_unstable_api_usage (320,354 samples, 0.57%)</title><rect x="18.8909%" y="229" width="0.5685%" height="15" fill="rgb(231,60,39)"/><text x="19.1409%" y="239.50"></text></g><g><title>looking_for_derive_registrar (59,210 samples, 0.11%)</title><rect x="19.4630%" y="229" width="0.1051%" height="15" fill="rgb(208,69,12)"/><text x="19.7130%" y="239.50"></text></g><g><title>misc_checking_1 (952,950 samples, 1.69%)</title><rect x="17.8854%" y="245" width="1.6911%" height="15" fill="rgb(235,93,37)"/><text x="18.1354%" y="255.50"></text></g><g><title>liveness_and_intrinsic_checking (154,682 samples, 0.27%)</title><rect x="19.5812%" y="229" width="0.2745%" height="15" fill="rgb(213,116,39)"/><text x="19.8312%" y="239.50"></text></g><g><title>check_mod_liveness (119,381 samples, 0.21%)</title><rect x="19.6439%" y="213" width="0.2119%" height="15" fill="rgb(222,207,29)"/><text x="19.8939%" y="223.50"></text></g><g><title>misc_checking_2 (301,043 samples, 0.53%)</title><rect x="19.5765%" y="245" width="0.5342%" height="15" fill="rgb(206,96,30)"/><text x="19.8265%" y="255.50"></text></g><g><title>match_checking (143,701 samples, 0.26%)</title><rect x="19.8557%" y="229" width="0.2550%" height="15" fill="rgb(218,138,4)"/><text x="20.1057%" y="239.50"></text></g><g><title>check_match (128,951 samples, 0.23%)</title><rect x="19.8819%" y="213" width="0.2288%" height="15" fill="rgb(250,191,14)"/><text x="20.1319%" y="223.50"></text></g><g><title>death_checking (121,602 samples, 0.22%)</title><rect x="20.2032%" y="229" width="0.2158%" height="15" fill="rgb(239,60,40)"/><text x="20.4532%" y="239.50"></text></g><g><title>fn_abi_of_instance (126,613 samples, 0.22%)</title><rect x="21.2726%" y="37" width="0.2247%" height="15" fill="rgb(206,27,48)"/><text x="21.5226%" y="47.50"></text></g><g><title>eval_to_const_value_raw (284,253 samples, 0.50%)</title><rect x="21.1634%" y="85" width="0.5044%" height="15" fill="rgb(225,35,8)"/><text x="21.4134%" y="95.50"></text></g><g><title>eval_to_const_value_raw (283,493 samples, 0.50%)</title><rect x="21.1648%" y="69" width="0.5031%" height="15" fill="rgb(250,213,24)"/><text x="21.4148%" y="79.50"></text></g><g><title>eval_to_allocation_raw (281,283 samples, 0.50%)</title><rect x="21.1687%" y="53" width="0.4992%" height="15" fill="rgb(247,123,22)"/><text x="21.4187%" y="63.50"></text></g><g><title>eval_to_const_value_raw (442,305 samples, 0.78%)</title><rect x="20.8900%" y="149" width="0.7849%" height="15" fill="rgb(231,138,38)"/><text x="21.1400%" y="159.50"></text></g><g><title>eval_to_const_value_raw (441,165 samples, 0.78%)</title><rect x="20.8920%" y="133" width="0.7829%" height="15" fill="rgb(231,145,46)"/><text x="21.1420%" y="143.50"></text></g><g><title>eval_to_allocation_raw (439,805 samples, 0.78%)</title><rect x="20.8944%" y="117" width="0.7805%" height="15" fill="rgb(251,118,11)"/><text x="21.1444%" y="127.50"></text></g><g><title>try_normalize_mir_const_after_erasing_regions (291,533 samples, 0.52%)</title><rect x="21.1575%" y="101" width="0.5174%" height="15" fill="rgb(217,147,25)"/><text x="21.4075%" y="111.50"></text></g><g><title>eval_to_allocation_raw (568,746 samples, 1.01%)</title><rect x="20.6670%" y="197" width="1.0093%" height="15" fill="rgb(247,81,37)"/><text x="20.9170%" y="207.50"></text></g><g><title>eval_to_allocation_raw (564,316 samples, 1.00%)</title><rect x="20.6749%" y="181" width="1.0014%" height="15" fill="rgb(209,12,38)"/><text x="20.9249%" y="191.50"></text></g><g><title>try_normalize_mir_const_after_erasing_regions (451,735 samples, 0.80%)</title><rect x="20.8746%" y="165" width="0.8016%" height="15" fill="rgb(227,1,9)"/><text x="21.1246%" y="175.50"></text></g><g><title>crate_lints (813,459 samples, 1.44%)</title><rect x="20.4219%" y="213" width="1.4436%" height="15" fill="rgb(248,47,43)"/><text x="20.6719%" y="223.50"></text></g><g><title>param_env (106,592 samples, 0.19%)</title><rect x="21.6763%" y="197" width="0.1892%" height="15" fill="rgb(221,10,30)"/><text x="21.9263%" y="207.50"></text></g><g><title>lint_checking (872,050 samples, 1.55%)</title><rect x="20.4190%" y="229" width="1.5475%" height="15" fill="rgb(210,229,1)"/><text x="20.6690%" y="239.50"></text></g><g><title>module_lints (56,951 samples, 0.10%)</title><rect x="21.8654%" y="213" width="0.1011%" height="15" fill="rgb(222,148,37)"/><text x="22.1154%" y="223.50"></text></g><g><title>privacy_checking_modules (70,810 samples, 0.13%)</title><rect x="22.0386%" y="229" width="0.1257%" height="15" fill="rgb(234,67,33)"/><text x="22.2886%" y="239.50"></text></g><g><title>check_mod_privacy (68,840 samples, 0.12%)</title><rect x="22.0421%" y="213" width="0.1222%" height="15" fill="rgb(247,98,35)"/><text x="22.2921%" y="223.50"></text></g><g><title>misc_checking_3 (1,172,323 samples, 2.08%)</title><rect x="20.1107%" y="245" width="2.0804%" height="15" fill="rgb(247,138,52)"/><text x="20.3607%" y="255.50">m..</text></g><g><title>impl_parent (85,130 samples, 0.15%)</title><rect x="22.6372%" y="181" width="0.1511%" height="15" fill="rgb(213,79,30)"/><text x="22.8872%" y="191.50"></text></g><g><title>metadata_decode_entry_impl_parent (68,190 samples, 0.12%)</title><rect x="22.6672%" y="165" width="0.1210%" height="15" fill="rgb(246,177,23)"/><text x="22.9172%" y="175.50"></text></g><g><title>impl_trait_ref (319,885 samples, 0.57%)</title><rect x="22.7882%" y="181" width="0.5677%" height="15" fill="rgb(230,62,27)"/><text x="23.0382%" y="191.50"></text></g><g><title>metadata_decode_entry_impl_trait_ref (302,455 samples, 0.54%)</title><rect x="22.8192%" y="165" width="0.5367%" height="15" fill="rgb(216,154,8)"/><text x="23.0692%" y="175.50"></text></g><g><title>coherent_trait (690,688 samples, 1.23%)</title><rect x="22.3194%" y="213" width="1.2257%" height="15" fill="rgb(244,35,45)"/><text x="22.5694%" y="223.50"></text></g><g><title>specialization_graph_of (678,967 samples, 1.20%)</title><rect x="22.3402%" y="197" width="1.2049%" height="15" fill="rgb(251,115,12)"/><text x="22.5902%" y="207.50"></text></g><g><title>trait_impls_of (106,641 samples, 0.19%)</title><rect x="23.3559%" y="181" width="0.1892%" height="15" fill="rgb(240,54,50)"/><text x="23.6059%" y="191.50"></text></g><g><title>orphan_check_crate (119,611 samples, 0.21%)</title><rect x="23.5618%" y="213" width="0.2123%" height="15" fill="rgb(233,84,52)"/><text x="23.8118%" y="223.50"></text></g><g><title>coherence_checking (841,799 samples, 1.49%)</title><rect x="22.2859%" y="229" width="1.4938%" height="15" fill="rgb(207,117,47)"/><text x="22.5359%" y="239.50"></text></g><g><title>associated_item (257,712 samples, 0.46%)</title><rect x="29.9845%" y="165" width="0.4573%" height="15" fill="rgb(249,43,39)"/><text x="30.2345%" y="175.50"></text></g><g><title>metadata_decode_entry_associated_item (196,602 samples, 0.35%)</title><rect x="30.0929%" y="149" width="0.3489%" height="15" fill="rgb(209,38,44)"/><text x="30.3429%" y="159.50"></text></g><g><title>associated_items (368,703 samples, 0.65%)</title><rect x="29.8163%" y="181" width="0.6543%" height="15" fill="rgb(236,212,23)"/><text x="30.0663%" y="191.50"></text></g><g><title>adt_def (61,851 samples, 0.11%)</title><rect x="30.9513%" y="101" width="0.1098%" height="15" fill="rgb(242,79,21)"/><text x="31.2013%" y="111.50"></text></g><g><title>metadata_decode_entry_adt_def (61,271 samples, 0.11%)</title><rect x="30.9524%" y="85" width="0.1087%" height="15" fill="rgb(211,96,35)"/><text x="31.2024%" y="95.50"></text></g><g><title>adt_dtorck_constraint (81,061 samples, 0.14%)</title><rect x="30.9369%" y="117" width="0.1439%" height="15" fill="rgb(253,215,40)"/><text x="31.1869%" y="127.50"></text></g><g><title>adt_dtorck_constraint (188,462 samples, 0.33%)</title><rect x="30.7953%" y="133" width="0.3344%" height="15" fill="rgb(211,81,21)"/><text x="31.0453%" y="143.50"></text></g><g><title>adt_dtorck_constraint (220,904 samples, 0.39%)</title><rect x="30.7535%" y="149" width="0.3920%" height="15" fill="rgb(208,190,38)"/><text x="31.0035%" y="159.50"></text></g><g><title>dropck_outlives (366,055 samples, 0.65%)</title><rect x="30.5101%" y="181" width="0.6496%" height="15" fill="rgb(235,213,38)"/><text x="30.7601%" y="191.50"></text></g><g><title>adt_dtorck_constraint (319,425 samples, 0.57%)</title><rect x="30.5928%" y="165" width="0.5668%" height="15" fill="rgb(237,122,38)"/><text x="30.8428%" y="175.50"></text></g><g><title>adt_def (143,511 samples, 0.25%)</title><rect x="32.1687%" y="149" width="0.2547%" height="15" fill="rgb(244,218,35)"/><text x="32.4187%" y="159.50"></text></g><g><title>metadata_decode_entry_adt_def (140,931 samples, 0.25%)</title><rect x="32.1733%" y="133" width="0.2501%" height="15" fill="rgb(240,68,47)"/><text x="32.4233%" y="143.50"></text></g><g><title>item_attrs (109,081 samples, 0.19%)</title><rect x="32.2298%" y="117" width="0.1936%" height="15" fill="rgb(210,16,53)"/><text x="32.4798%" y="127.50"></text></g><g><title>metadata_decode_entry_item_attrs (106,141 samples, 0.19%)</title><rect x="32.2351%" y="101" width="0.1884%" height="15" fill="rgb(235,124,12)"/><text x="32.4851%" y="111.50"></text></g><g><title>adt_def (148,861 samples, 0.26%)</title><rect x="32.4309%" y="133" width="0.2642%" height="15" fill="rgb(224,169,11)"/><text x="32.6809%" y="143.50"></text></g><g><title>metadata_decode_entry_adt_def (147,761 samples, 0.26%)</title><rect x="32.4329%" y="117" width="0.2622%" height="15" fill="rgb(250,166,2)"/><text x="32.6829%" y="127.50"></text></g><g><title>item_attrs (136,091 samples, 0.24%)</title><rect x="32.4536%" y="101" width="0.2415%" height="15" fill="rgb(242,216,29)"/><text x="32.7036%" y="111.50"></text></g><g><title>metadata_decode_entry_item_attrs (134,991 samples, 0.24%)</title><rect x="32.4556%" y="85" width="0.2396%" height="15" fill="rgb(230,116,27)"/><text x="32.7056%" y="95.50"></text></g><g><title>adt_sized_constraint (182,131 samples, 0.32%)</title><rect x="32.4234%" y="149" width="0.3232%" height="15" fill="rgb(228,99,48)"/><text x="32.6734%" y="159.50"></text></g><g><title>adt_sized_constraint (350,513 samples, 0.62%)</title><rect x="32.1424%" y="165" width="0.6220%" height="15" fill="rgb(253,11,6)"/><text x="32.3924%" y="175.50"></text></g><g><title>generics_of (83,121 samples, 0.15%)</title><rect x="32.7644%" y="165" width="0.1475%" height="15" fill="rgb(247,143,39)"/><text x="33.0144%" y="175.50"></text></g><g><title>metadata_decode_entry_generics_of (70,581 samples, 0.13%)</title><rect x="32.7867%" y="149" width="0.1253%" height="15" fill="rgb(236,97,10)"/><text x="33.0367%" y="159.50"></text></g><g><title>impl_trait_ref (130,712 samples, 0.23%)</title><rect x="32.9336%" y="165" width="0.2320%" height="15" fill="rgb(233,208,19)"/><text x="33.1836%" y="175.50"></text></g><g><title>metadata_decode_entry_impl_trait_ref (110,822 samples, 0.20%)</title><rect x="32.9689%" y="149" width="0.1967%" height="15" fill="rgb(216,164,2)"/><text x="33.2189%" y="159.50"></text></g><g><title>predicates_of (107,440 samples, 0.19%)</title><rect x="33.1844%" y="165" width="0.1907%" height="15" fill="rgb(220,129,5)"/><text x="33.4344%" y="175.50"></text></g><g><title>predicates_defined_on (70,400 samples, 0.12%)</title><rect x="33.2501%" y="149" width="0.1249%" height="15" fill="rgb(242,17,10)"/><text x="33.5001%" y="159.50"></text></g><g><title>specializes (83,801 samples, 0.15%)</title><rect x="33.3751%" y="165" width="0.1487%" height="15" fill="rgb(242,107,0)"/><text x="33.6251%" y="175.50"></text></g><g><title>trait_impls_of (319,004 samples, 0.57%)</title><rect x="33.5424%" y="165" width="0.5661%" height="15" fill="rgb(251,28,31)"/><text x="33.7924%" y="175.50"></text></g><g><title>implementations_of_trait (104,432 samples, 0.19%)</title><rect x="33.9232%" y="149" width="0.1853%" height="15" fill="rgb(233,223,10)"/><text x="34.1732%" y="159.50"></text></g><g><title>metadata_decode_entry_implementations_of_trait (64,341 samples, 0.11%)</title><rect x="33.9944%" y="133" width="0.1142%" height="15" fill="rgb(215,21,27)"/><text x="34.2444%" y="143.50"></text></g><g><title>evaluate_obligation (1,663,387 samples, 2.95%)</title><rect x="31.1597%" y="181" width="2.9518%" height="15" fill="rgb(232,23,21)"/><text x="31.4097%" y="191.50">eva..</text></g><g><title>fn_sig (70,750 samples, 0.13%)</title><rect x="34.1252%" y="181" width="0.1256%" height="15" fill="rgb(244,5,23)"/><text x="34.3752%" y="191.50"></text></g><g><title>metadata_decode_entry_fn_sig (56,650 samples, 0.10%)</title><rect x="34.1502%" y="165" width="0.1005%" height="15" fill="rgb(226,81,46)"/><text x="34.4002%" y="175.50"></text></g><g><title>generics_of (89,660 samples, 0.16%)</title><rect x="34.2507%" y="181" width="0.1591%" height="15" fill="rgb(247,70,30)"/><text x="34.5007%" y="191.50"></text></g><g><title>metadata_decode_entry_generics_of (72,890 samples, 0.13%)</title><rect x="34.2805%" y="165" width="0.1293%" height="15" fill="rgb(212,68,19)"/><text x="34.5305%" y="175.50"></text></g><g><title>method_autoderef_steps (119,111 samples, 0.21%)</title><rect x="34.6628%" y="181" width="0.2114%" height="15" fill="rgb(240,187,13)"/><text x="34.9128%" y="191.50"></text></g><g><title>explicit_predicates_of (64,541 samples, 0.11%)</title><rect x="35.1460%" y="149" width="0.1145%" height="15" fill="rgb(223,113,26)"/><text x="35.3960%" y="159.50"></text></g><g><title>predicates_of (236,393 samples, 0.42%)</title><rect x="34.9073%" y="181" width="0.4195%" height="15" fill="rgb(206,192,2)"/><text x="35.1573%" y="191.50"></text></g><g><title>predicates_defined_on (161,542 samples, 0.29%)</title><rect x="35.0401%" y="165" width="0.2867%" height="15" fill="rgb(241,108,4)"/><text x="35.2901%" y="175.50"></text></g><g><title>trait_impls_of (125,822 samples, 0.22%)</title><rect x="35.3348%" y="181" width="0.2233%" height="15" fill="rgb(247,173,49)"/><text x="35.5848%" y="191.50"></text></g><g><title>item_bodies_checking (6,691,283 samples, 11.87%)</title><rect x="23.8248%" y="229" width="11.8743%" height="15" fill="rgb(224,114,35)"/><text x="24.0748%" y="239.50">item_bodies_checki..</text></g><g><title>typeck_item_bodies (6,687,723 samples, 11.87%)</title><rect x="23.8312%" y="213" width="11.8680%" height="15" fill="rgb(245,159,27)"/><text x="24.0812%" y="223.50">typeck_item_bodies</text></g><g><title>typeck (6,658,193 samples, 11.82%)</title><rect x="23.8836%" y="197" width="11.8156%" height="15" fill="rgb(245,172,44)"/><text x="24.1336%" y="207.50">typeck</text></g><g><title>impl_parent (136,301 samples, 0.24%)</title><rect x="36.5670%" y="149" width="0.2419%" height="15" fill="rgb(236,23,11)"/><text x="36.8170%" y="159.50"></text></g><g><title>metadata_decode_entry_impl_parent (87,371 samples, 0.16%)</title><rect x="36.6538%" y="133" width="0.1550%" height="15" fill="rgb(205,117,38)"/><text x="36.9038%" y="143.50"></text></g><g><title>impl_trait_ref (505,697 samples, 0.90%)</title><rect x="36.8088%" y="149" width="0.8974%" height="15" fill="rgb(237,72,25)"/><text x="37.0588%" y="159.50"></text></g><g><title>metadata_decode_entry_impl_trait_ref (457,386 samples, 0.81%)</title><rect x="36.8946%" y="133" width="0.8117%" height="15" fill="rgb(244,70,9)"/><text x="37.1446%" y="143.50"></text></g><g><title>adt_destructor (902,710 samples, 1.60%)</title><rect x="36.2155%" y="197" width="1.6019%" height="15" fill="rgb(217,125,39)"/><text x="36.4655%" y="207.50"></text></g><g><title>coherent_trait (897,820 samples, 1.59%)</title><rect x="36.2242%" y="181" width="1.5933%" height="15" fill="rgb(235,36,10)"/><text x="36.4742%" y="191.50"></text></g><g><title>specialization_graph_of (894,340 samples, 1.59%)</title><rect x="36.2304%" y="165" width="1.5871%" height="15" fill="rgb(251,123,47)"/><text x="36.4804%" y="175.50"></text></g><g><title>trait_impls_of (62,671 samples, 0.11%)</title><rect x="37.7062%" y="149" width="0.1112%" height="15" fill="rgb(221,13,13)"/><text x="37.9562%" y="159.50"></text></g><g><title>layout_of (57,331 samples, 0.10%)</title><rect x="38.2431%" y="117" width="0.1017%" height="15" fill="rgb(238,131,9)"/><text x="38.4931%" y="127.50"></text></g><g><title>layout_of (119,522 samples, 0.21%)</title><rect x="38.1438%" y="149" width="0.2121%" height="15" fill="rgb(211,50,8)"/><text x="38.3938%" y="159.50"></text></g><g><title>layout_of (95,791 samples, 0.17%)</title><rect x="38.1859%" y="133" width="0.1700%" height="15" fill="rgb(245,182,24)"/><text x="38.4359%" y="143.50"></text></g><g><title>layout_of (180,703 samples, 0.32%)</title><rect x="38.0885%" y="165" width="0.3207%" height="15" fill="rgb(242,14,37)"/><text x="38.3385%" y="175.50"></text></g><g><title>layout_of (276,133 samples, 0.49%)</title><rect x="38.0056%" y="181" width="0.4900%" height="15" fill="rgb(246,228,12)"/><text x="38.2556%" y="191.50"></text></g><g><title>layout_of (322,243 samples, 0.57%)</title><rect x="37.9556%" y="197" width="0.5718%" height="15" fill="rgb(213,55,15)"/><text x="38.2056%" y="207.50"></text></g><g><title>adt_dtorck_constraint (89,771 samples, 0.16%)</title><rect x="39.7041%" y="133" width="0.1593%" height="15" fill="rgb(209,9,3)"/><text x="39.9541%" y="143.50"></text></g><g><title>adt_dtorck_constraint (163,392 samples, 0.29%)</title><rect x="39.6084%" y="149" width="0.2900%" height="15" fill="rgb(230,59,30)"/><text x="39.8584%" y="159.50"></text></g><g><title>dropck_outlives (289,853 samples, 0.51%)</title><rect x="39.4350%" y="181" width="0.5144%" height="15" fill="rgb(209,121,21)"/><text x="39.6850%" y="191.50"></text></g><g><title>adt_dtorck_constraint (240,443 samples, 0.43%)</title><rect x="39.5227%" y="165" width="0.4267%" height="15" fill="rgb(220,109,13)"/><text x="39.7727%" y="175.50"></text></g><g><title>item_types_checking (2,525,829 samples, 4.48%)</title><rect x="35.6991%" y="229" width="4.4823%" height="15" fill="rgb(232,18,1)"/><text x="35.9491%" y="239.50">item_..</text></g><g><title>check_mod_item_types (2,518,409 samples, 4.47%)</title><rect x="35.7123%" y="213" width="4.4691%" height="15" fill="rgb(215,41,42)"/><text x="35.9623%" y="223.50">check..</text></g><g><title>typeck (911,170 samples, 1.62%)</title><rect x="38.5645%" y="197" width="1.6170%" height="15" fill="rgb(224,123,36)"/><text x="38.8145%" y="207.50"></text></g><g><title>late_bound_vars_map (92,880 samples, 0.16%)</title><rect x="40.5987%" y="181" width="0.1648%" height="15" fill="rgb(240,125,3)"/><text x="40.8487%" y="191.50"></text></g><g><title>resolve_lifetimes (76,940 samples, 0.14%)</title><rect x="40.6270%" y="165" width="0.1365%" height="15" fill="rgb(205,98,50)"/><text x="40.8770%" y="175.50"></text></g><g><title>fn_sig (207,821 samples, 0.37%)</title><rect x="40.4419%" y="197" width="0.3688%" height="15" fill="rgb(205,185,37)"/><text x="40.6919%" y="207.50"></text></g><g><title>generics_of (108,691 samples, 0.19%)</title><rect x="40.8107%" y="197" width="0.1929%" height="15" fill="rgb(238,207,15)"/><text x="41.0607%" y="207.50"></text></g><g><title>explicit_predicates_of (65,231 samples, 0.12%)</title><rect x="41.1557%" y="165" width="0.1158%" height="15" fill="rgb(213,199,42)"/><text x="41.4057%" y="175.50"></text></g><g><title>predicates_of (170,013 samples, 0.30%)</title><rect x="41.0607%" y="197" width="0.3017%" height="15" fill="rgb(235,201,11)"/><text x="41.3107%" y="207.50"></text></g><g><title>predicates_defined_on (151,042 samples, 0.27%)</title><rect x="41.0944%" y="181" width="0.2680%" height="15" fill="rgb(207,46,11)"/><text x="41.3444%" y="191.50"></text></g><g><title>type_collecting (784,959 samples, 1.39%)</title><rect x="40.1859%" y="229" width="1.3930%" height="15" fill="rgb(241,35,35)"/><text x="40.4359%" y="239.50"></text></g><g><title>collect_mod_item_types (763,658 samples, 1.36%)</title><rect x="40.2237%" y="213" width="1.3552%" height="15" fill="rgb(243,32,47)"/><text x="40.4737%" y="223.50"></text></g><g><title>type_of (121,971 samples, 0.22%)</title><rect x="41.3624%" y="197" width="0.2164%" height="15" fill="rgb(247,202,23)"/><text x="41.6124%" y="207.50"></text></g><g><title>evaluate_obligation (160,182 samples, 0.28%)</title><rect x="42.0212%" y="197" width="0.2843%" height="15" fill="rgb(219,102,11)"/><text x="42.2712%" y="207.50"></text></g><g><title>check_impl_item_well_formed (438,815 samples, 0.78%)</title><rect x="41.6939%" y="213" width="0.7787%" height="15" fill="rgb(243,110,44)"/><text x="41.9439%" y="223.50"></text></g><g><title>adt_def (92,531 samples, 0.16%)</title><rect x="44.1146%" y="149" width="0.1642%" height="15" fill="rgb(222,74,54)"/><text x="44.3646%" y="159.50"></text></g><g><title>metadata_decode_entry_adt_def (91,361 samples, 0.16%)</title><rect x="44.1167%" y="133" width="0.1621%" height="15" fill="rgb(216,99,12)"/><text x="44.3667%" y="143.50"></text></g><g><title>item_attrs (77,641 samples, 0.14%)</title><rect x="44.1410%" y="117" width="0.1378%" height="15" fill="rgb(226,22,26)"/><text x="44.3910%" y="127.50"></text></g><g><title>metadata_decode_entry_item_attrs (76,371 samples, 0.14%)</title><rect x="44.1433%" y="101" width="0.1355%" height="15" fill="rgb(217,163,10)"/><text x="44.3933%" y="111.50"></text></g><g><title>adt_sized_constraint (67,471 samples, 0.12%)</title><rect x="44.2788%" y="149" width="0.1197%" height="15" fill="rgb(213,25,53)"/><text x="44.5288%" y="159.50"></text></g><g><title>adt_def (65,651 samples, 0.12%)</title><rect x="44.2820%" y="133" width="0.1165%" height="15" fill="rgb(252,105,26)"/><text x="44.5320%" y="143.50"></text></g><g><title>metadata_decode_entry_adt_def (65,071 samples, 0.12%)</title><rect x="44.2830%" y="117" width="0.1155%" height="15" fill="rgb(220,39,43)"/><text x="44.5330%" y="127.50"></text></g><g><title>item_attrs (59,940 samples, 0.11%)</title><rect x="44.2921%" y="101" width="0.1064%" height="15" fill="rgb(229,68,48)"/><text x="44.5421%" y="111.50"></text></g><g><title>metadata_decode_entry_item_attrs (59,340 samples, 0.11%)</title><rect x="44.2932%" y="85" width="0.1053%" height="15" fill="rgb(252,8,32)"/><text x="44.5432%" y="95.50"></text></g><g><title>adt_sized_constraint (189,222 samples, 0.34%)</title><rect x="44.0989%" y="165" width="0.3358%" height="15" fill="rgb(223,20,43)"/><text x="44.3489%" y="175.50"></text></g><g><title>adt_sized_constraint (250,883 samples, 0.45%)</title><rect x="44.0071%" y="181" width="0.4452%" height="15" fill="rgb(229,81,49)"/><text x="44.2571%" y="191.50"></text></g><g><title>evaluate_obligation (611,537 samples, 1.09%)</title><rect x="43.5912%" y="197" width="1.0852%" height="15" fill="rgb(236,28,36)"/><text x="43.8412%" y="207.50"></text></g><g><title>trait_impls_of (62,251 samples, 0.11%)</title><rect x="44.5659%" y="181" width="0.1105%" height="15" fill="rgb(249,185,26)"/><text x="44.8159%" y="191.50"></text></g><g><title>implied_outlives_bounds (104,641 samples, 0.19%)</title><rect x="44.6801%" y="197" width="0.1857%" height="15" fill="rgb(249,174,33)"/><text x="44.9301%" y="207.50"></text></g><g><title>param_env (253,301 samples, 0.45%)</title><rect x="44.8672%" y="197" width="0.4495%" height="15" fill="rgb(233,201,37)"/><text x="45.1172%" y="207.50"></text></g><g><title>region_scope_tree (77,830 samples, 0.14%)</title><rect x="45.3792%" y="197" width="0.1381%" height="15" fill="rgb(221,78,26)"/><text x="45.6292%" y="207.50"></text></g><g><title>analysis (24,829,014 samples, 44.06%)</title><rect x="1.5302%" y="261" width="44.0613%" height="15" fill="rgb(250,127,30)"/><text x="1.7802%" y="271.50">analysis</text></g><g><title>type_check_crate (13,186,366 samples, 23.40%)</title><rect x="22.1911%" y="245" width="23.4004%" height="15" fill="rgb(230,49,44)"/><text x="22.4411%" y="255.50">type_check_crate</text></g><g><title>wf_checking (2,258,425 samples, 4.01%)</title><rect x="41.5837%" y="229" width="4.0078%" height="15" fill="rgb(229,67,23)"/><text x="41.8337%" y="239.50">wf_c..</text></g><g><title>check_item_well_formed (1,757,508 samples, 3.12%)</title><rect x="42.4726%" y="213" width="3.1189%" height="15" fill="rgb(249,83,47)"/><text x="42.7226%" y="223.50">che..</text></g><g><title>codegen_crate (377,814 samples, 0.67%)</title><rect x="45.6119%" y="261" width="0.6705%" height="15" fill="rgb(215,43,3)"/><text x="45.8619%" y="271.50"></text></g><g><title>AST_validation (123,642 samples, 0.22%)</title><rect x="46.7002%" y="245" width="0.2194%" height="15" fill="rgb(238,154,13)"/><text x="46.9502%" y="255.50"></text></g><g><title>crate_injection (83,631 samples, 0.15%)</title><rect x="47.0052%" y="245" width="0.1484%" height="15" fill="rgb(219,56,2)"/><text x="47.2552%" y="255.50"></text></g><g><title>metadata_load_macro (196,632 samples, 0.35%)</title><rect x="69.4264%" y="213" width="0.3489%" height="15" fill="rgb(233,0,4)"/><text x="69.6764%" y="223.50"></text></g><g><title>metadata_register_crate (2,736,800 samples, 4.86%)</title><rect x="69.7753%" y="213" width="4.8567%" height="15" fill="rgb(235,30,7)"/><text x="70.0253%" y="223.50">metada..</text></g><g><title>metadata_register_crate (959,972 samples, 1.70%)</title><rect x="72.9284%" y="197" width="1.7036%" height="15" fill="rgb(250,79,13)"/><text x="73.1784%" y="207.50"></text></g><g><title>metadata_register_crate (73,521 samples, 0.13%)</title><rect x="74.5015%" y="181" width="0.1305%" height="15" fill="rgb(211,146,34)"/><text x="74.7515%" y="191.50"></text></g><g><title>macro_expand_crate (15,551,431 samples, 27.60%)</title><rect x="47.1536%" y="245" width="27.5974%" height="15" fill="rgb(228,22,38)"/><text x="47.4036%" y="255.50">macro_expand_crate</text></g><g><title>expand_crate (15,534,751 samples, 27.57%)</title><rect x="47.1832%" y="229" width="27.5678%" height="15" fill="rgb(235,168,5)"/><text x="47.4332%" y="239.50">expand_crate</text></g><g><title>pre_AST_expansion_lint_checks (67,080 samples, 0.12%)</title><rect x="74.6320%" y="213" width="0.1190%" height="15" fill="rgb(221,155,16)"/><text x="74.8820%" y="223.50"></text></g><g><title>pre_AST_expansion_lint_checks (63,460 samples, 0.11%)</title><rect x="74.7605%" y="245" width="0.1126%" height="15" fill="rgb(215,215,53)"/><text x="75.0105%" y="255.50"></text></g><g><title>finalize_imports (59,520 samples, 0.11%)</title><rect x="74.8945%" y="229" width="0.1056%" height="15" fill="rgb(223,4,10)"/><text x="75.1445%" y="239.50"></text></g><g><title>finalize_macro_resolutions (265,243 samples, 0.47%)</title><rect x="75.0001%" y="229" width="0.4707%" height="15" fill="rgb(234,103,6)"/><text x="75.2501%" y="239.50"></text></g><g><title>late_resolve_crate (8,319,672 samples, 14.76%)</title><rect x="75.4708%" y="229" width="14.7640%" height="15" fill="rgb(227,97,0)"/><text x="75.7208%" y="239.50">late_resolve_crate</text></g><g><title>configure_and_expand (24,838,934 samples, 44.08%)</title><rect x="46.2824%" y="261" width="44.0789%" height="15" fill="rgb(234,150,53)"/><text x="46.5324%" y="271.50">configure_and_expand</text></g><g><title>resolve_crate (8,727,776 samples, 15.49%)</title><rect x="74.8731%" y="245" width="15.4882%" height="15" fill="rgb(228,201,54)"/><text x="75.1231%" y="255.50">resolve_crate</text></g><g><title>drop_ast (79,561 samples, 0.14%)</title><rect x="90.3613%" y="261" width="0.1412%" height="15" fill="rgb(222,22,37)"/><text x="90.6113%" y="271.50"></text></g><g><title>early_lint_checks (202,732 samples, 0.36%)</title><rect x="90.5303%" y="261" width="0.3598%" height="15" fill="rgb(237,53,32)"/><text x="90.7803%" y="271.50"></text></g><g><title>free_global_ctxt (2,315,115 samples, 4.11%)</title><rect x="90.8900%" y="261" width="4.1084%" height="15" fill="rgb(233,25,53)"/><text x="91.1400%" y="271.50">free..</text></g><g><title>crate_hash (67,951 samples, 0.12%)</title><rect x="95.4955%" y="245" width="0.1206%" height="15" fill="rgb(210,40,34)"/><text x="95.7455%" y="255.50"></text></g><g><title>generate_crate_metadata (404,925 samples, 0.72%)</title><rect x="94.9984%" y="261" width="0.7186%" height="15" fill="rgb(241,220,44)"/><text x="95.2484%" y="271.50"></text></g><g><title>hir_lowering (850,119 samples, 1.51%)</title><rect x="95.7170%" y="261" width="1.5086%" height="15" fill="rgb(235,28,35)"/><text x="95.9670%" y="271.50"></text></g><g><title>parse_crate (379,504 samples, 0.67%)</title><rect x="97.3022%" y="261" width="0.6735%" height="15" fill="rgb(210,56,17)"/><text x="97.5522%" y="271.50"></text></g><g><title>prepare_outputs (319,634 samples, 0.57%)</title><rect x="97.9936%" y="261" width="0.5672%" height="15" fill="rgb(224,130,29)"/><text x="98.2436%" y="271.50"></text></g><g><title>self_profile_alloc_query_strings (365,554 samples, 0.65%)</title><rect x="98.5608%" y="261" width="0.6487%" height="15" fill="rgb(235,212,8)"/><text x="98.8108%" y="271.50"></text></g><g><title>setup_global_ctxt (137,351 samples, 0.24%)</title><rect x="99.2273%" y="261" width="0.2437%" height="15" fill="rgb(223,33,50)"/><text x="99.4773%" y="271.50"></text></g><g><title>all (56,351,032 samples, 100%)</title><rect x="0.0000%" y="293" width="100.0000%" height="15" fill="rgb(219,149,13)"/><text x="0.2500%" y="303.50"></text></g><g><title>rustc (56,351,032 samples, 100.00%)</title><rect x="0.0000%" y="277" width="100.0000%" height="15" fill="rgb(250,156,29)"/><text x="0.2500%" y="287.50">rustc</text></g><g><title>write_crate_metadata (298,063 samples, 0.53%)</title><rect x="99.4711%" y="261" width="0.5289%" height="15" fill="rgb(216,193,19)"/><text x="99.7211%" y="271.50"></text></g></svg></svg>
