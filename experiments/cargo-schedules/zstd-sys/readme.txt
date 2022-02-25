@@ -1,0 +1,1 @@
+Before / After prioritizing zstd-sys and its dependencies: libc, jobserver, cc, zstd-sys
