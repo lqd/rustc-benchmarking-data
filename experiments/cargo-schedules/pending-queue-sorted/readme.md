@@ -16,13 +16,15 @@ Interestingly, "low core counts" describes many CI builder configurations. And t
 
 The results that follow were gathered running hyperfine, with 5 clean runs (which is also a common occurence for CI builders): check and debug builds, at j2, j4, and j6.
 
-There were ran over the 800 popular crates.io crates or so benchmarked in this repository.
+They were ran over the 800 popular crates.io crates or so benchmarked in this repository.
 
 The results can be noisy at the low-end, so the visualizations are only the changes to the crates that took at least 1s to build (around 500 or so), but summary and raw data is available for every one. The text summaries and complete hyperfine outputs also contain their confidence range. These results are not intended to be a super precise evaluation of the simplistic prototype, but to show a trend (hopefully).
 
 Since there were both wins and losses, the charts show the amplitude percentage of the change to build times (positive and negative; when a change occurred, so >0%), and the associated number of wins and losses at that amplitude (respectively, on the right-side and left-side of the chart).
 
-The chart shows the normalized amplitude as percentages, while the summary and raw data from hyperfine has them relative to the other, à la "1.10 times faster" to mean a win/loss of around 9%. They also identify today's cargo as the "baseline cargo" and the scheduling prototype as "custom cargo" (so the summaries will look like "publicsuffix-2.1.1 1.15 ± 0.03 times faster than 'baseline cargo check -j2'")
+The chart shows the normalized amplitude as percentages, while the summary and raw data from hyperfine has them relative to the other, à la "1.15 times faster" to mean a win/loss of around 13%. They also identify today's cargo as the "baseline cargo" and the scheduling prototype as "custom cargo" (so the summaries will look like "publicsuffix-2.1.1 1.15 ± 0.03 times faster than 'baseline cargo check -j2'")
+
+It seems the trend is generally positive, on this sample of crates.
 
 #### Check builds
 
