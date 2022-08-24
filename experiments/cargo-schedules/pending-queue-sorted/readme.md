@@ -32,28 +32,28 @@ The chart shows the normalized amplitude as percentages, while the summary and r
 
 To clarify this one, and the following charts, here's an example on how it's read: there were 36 crates where build times improved by 2%, and 10 that saw a 2% loss.
 
-Here are the links to:
-- [a sorted summary for the "slow to build" crates](./summaries/summary-check-j2-sorted.txt)
-- [a sorted summary of changes to all the tested crates](./summaries/summary-check-j2-all-sorted.txt)
-- [the hyperfine outputs](./summaries/hyperfine/check/j2/)
+Here are links to:
+- sorted summaries for the "slow to build" crates: [wins only](./summaries/summary-check-j2-wins-sorted.txt), [losses only](./summaries/summary-check-j2-losses-sorted.txt), [both wins and losses combined](./summaries/summary-check-j2-sorted.txt)
+- sorted summaries of changes to all the tested crates: [wins only](./summaries/summary-check-j2-wins-all-sorted.txt), [losses only](./summaries/summary-check-j2-losses-all-sorted.txt), [both wins and losses combined](./summaries/summary-check-j2-all-sorted.txt)
+- [the 800+ hyperfine outputs](./summaries/hyperfine/check/j2/)
 
 2. `cargo check -j4`
 
 ![cargo check -j4](./images/check-j4-sorted.png)
 
-Here are the links to:
-- [a sorted summary for the "slow to build" crates](./summaries/summary-check-j4-sorted.txt)
-- [a sorted summary of changes to all the tested crates](./summaries/summary-check-j4-all-sorted.txt)
-- [the hyperfine outputs](./summaries/hyperfine/check/j4/)
+Here are links to:
+- sorted summaries for the "slow to build" crates: [wins only](./summaries/summary-check-j4-wins-sorted.txt), [losses only](./summaries/summary-check-j4-losses-sorted.txt), [both wins and losses combined](./summaries/summary-check-j4-sorted.txt)
+- sorted summaries of changes to all the tested crates: [wins only](./summaries/summary-check-j4-wins-all-sorted.txt), [losses only](./summaries/summary-check-j4-losses-all-sorted.txt), [both wins and losses combined](./summaries/summary-check-j4-all-sorted.txt)
+- [the 800+ hyperfine outputs](./summaries/hyperfine/check/j4/)
 
 3. `cargo check -j6`
 
 ![cargo check -j6](./images/check-j6-sorted.png)
 
-Here are the links to:
-- [a sorted summary for the "slow to build" crates](./summaries/summary-check-j6-sorted.txt)
-- [a sorted summary of changes to all the tested crates](./summaries/summary-check-j6-all-sorted.txt)
-- [the hyperfine outputs](./summaries/hyperfine/check/j6/)
+Here are links to:
+- sorted summaries for the "slow to build" crates: [wins only](./summaries/summary-check-j6-wins-sorted.txt), [losses only](./summaries/summary-check-j6-losses-sorted.txt), [both wins and losses combined](./summaries/summary-check-j6-sorted.txt)
+- sorted summaries of changes to all the tested crates: [wins only](./summaries/summary-check-j6-wins-all-sorted.txt), [losses only](./summaries/summary-check-j6-losses-all-sorted.txt), [both wins and losses combined](./summaries/summary-check-j6-all-sorted.txt)
+- [the 800+ hyperfine outputs](./summaries/hyperfine/check/j6/)
 
 #### Debug builds
 
@@ -61,25 +61,25 @@ Here are the links to:
 
 ![cargo build -j2](./images/build-j2-sorted.png)
 
-Here are the links to:
-- [a sorted summary for the "slow to build" crates](./summaries/summary-build-j2-sorted.txt)
-- [a sorted summary of changes to all the tested crates](./summaries/summary-build-j2-all-sorted.txt)
-- [the hyperfine outputs](./summaries/hyperfine/build/j2/)
+Here are links to:
+- sorted summaries for the "slow to build" crates: [wins only](./summaries/summary-build-j2-wins-sorted.txt), [losses only](./summaries/summary-build-j2-losses-sorted.txt), [both wins and losses combined](./summaries/summary-build-j2-sorted.txt)
+- sorted summaries of changes to all the tested crates: [wins only](./summaries/summary-build-j2-wins-all-sorted.txt), [losses only](./summaries/summary-build-j2-losses-all-sorted.txt), [both wins and losses combined](./summaries/summary-build-j2-all-sorted.txt)
+- [the 800+ hyperfine outputs](./summaries/hyperfine/build/j2/)
 
 2. `cargo build -j4`
 
 ![cargo build -j4](./images/build-j4-sorted.png)
 
-Here are the links to:
-- [a sorted summary for the "slow to build" crates](./summaries/summary-build-j4-sorted.txt)
-- [a sorted summary of changes to all the tested crates](./summaries/summary-build-j4-all-sorted.txt)
-- [the hyperfine outputs](./summaries/hyperfine/build/j4/)
+Here are links to:
+- sorted summaries for the "slow to build" crates: [wins only](./summaries/summary-build-j4-wins-sorted.txt), [losses only](./summaries/summary-build-j4-losses-sorted.txt), [both wins and losses combined](./summaries/summary-build-j4-sorted.txt)
+- sorted summaries of changes to all the tested crates: [wins only](./summaries/summary-build-j4-wins-all-sorted.txt), [losses only](./summaries/summary-build-j4-losses-all-sorted.txt), [both wins and losses combined](./summaries/summary-build-j4-all-sorted.txt)
+- [the 800+ hyperfine outputs](./summaries/hyperfine/build/j4/)
 
 3. `cargo build -j6`
 
 ![cargo build -j6](./images/build-j6-sorted.png)
 
-Here are the links to:
-- [a sorted summary for the "slow to build" crates](./summaries/summary-build-j6-sorted.txt)
-- [a sorted summary of changes to all the tested crates](./summaries/summary-build-j6-all-sorted.txt)
-- [the hyperfine outputs](./summaries/hyperfine/build/j6/)
+Here are links to:
+- sorted summaries for the "slow to build" crates: [wins only](./summaries/summary-build-j6-wins-sorted.txt), [losses only](./summaries/summary-build-j6-losses-sorted.txt), [both wins and losses combined](./summaries/summary-build-j6-sorted.txt)
+- sorted summaries of changes to all the tested crates: [wins only](./summaries/summary-build-j6-wins-all-sorted.txt), [losses only](./summaries/summary-build-j6-losses-all-sorted.txt), [both wins and losses combined](./summaries/summary-build-j6-all-sorted.txt)
+- [the 800+ hyperfine outputs](./summaries/hyperfine/build/j6/)
